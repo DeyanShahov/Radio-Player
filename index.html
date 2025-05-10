@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Радио Визуализатор с Bootstrap</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #101020; color: white; font-family: Arial, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; }
+        #controlsContainer { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 10; width: 350px; }
+        #controlsContainer .card { background-color: #212529 !important; border: 1px solid #495057; }
+        #controlsContainer .form-control,
+        #controlsContainer .form-select,
+        #controlsContainer .input-group-text { background-color: #343a40 !important; color: #f8f9fa !important; border-color: #495057 !important; }
+        #controlsContainer .form-label.small { font-size: 0.8rem; margin-bottom: 0.25rem; }
+        #playButton:disabled { color: rgba(255, 255, 255, 0.65) !important; }
+        audio { display: none; }
+        #visualizationModeControls { margin-top: 0.75rem; } /* Renamed from barModeControls */
+    </style>
+</head>
+<body>
+    <div id="controlsContainer">
+        <div class="card text-light shadow-lg">
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="audioUrlInput" class.form-label small">URL на радио станция:</label>
+                    <input type="text" id="audioUrlInput" class="form-control form-control-sm" value="http://149.13.0.80/nrj_low.ogg" list="radioStationsList">
+                    <datalist id="radioStationsList">
+                        <option value="http://149.13.0.80/nrj_low.ogg">NRJ</option>
+                        <option value="http://149.13.0.80/avtoradio.ogg">Авторадио</option>
+                        <option value="http://149.13.0.80/bgradio.ogg">БГ Радио</option>
+                        <option value="http://149.13.0.80/city.ogg">Радио City</option>
+                        <option value="http://149.13.0.80/energy-90s.ogg">Energy 90s</option>
+                        <option value="http://149.13.0.80/nova.ogg">Радио Nova</option>
+                        <option value="http://149.13.0.80/radio1.ogg">Радио 1</option>
+                        <option value="http://149.13.0.80/radio1rock.ogg">Радио 1 Рок</option>
+                        <option value="https://sphera.fluidstream.eu/radio80.mp3">radio80</option>
+                        <option value="http://channels.fluxfm.de/80s/stream.mp3">80s</option>
+                        <option value="http://icecast.pulsradio.com/magicradioHD.mp3">PulsRadio 80</option>
+                        <option value="https://rh.fluidstream.eu/ritmo80.mp3">Ritmo 80</option>
+                        <option value="https://centova.ipstream.it/proxy/megamix80/stream">Radio Megamix 80</option>
+                        <option value="http://audio1.maxi80.com/">Maxi 80</option>
+                        <option value="http://stream.rtlradio.de/80rock/mp3-192/">80 Rock</option>
+                        <option value="http://stream.rtlradio.de/80/mp3-192/">80 Hits</option>
+                        <option value="https://a3.asurahosting.com/listen/80s_mixed/radio.mp3">80s Mixed</option>
+                        <option value="http://broadcast.infomaniak.ch/voltage80s-128.mp3">VOLTAGE 80</option>
+                    </datalist>
+                </div>
+                <button id="playButton" class="btn btn-success btn-lg w-100 mb-3">Пусни</button>
+                <div class="mb-3">
+                    <label for="volumeSlider" class="form-label visually-hidden">Сила на звука:</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-volume-down-fill" style="font-size: 0.85rem;"></i></span>
+                        <input type="range" id="volumeSlider" class="form-range" min="0" max="1" step="0.01" value="1" style="flex: 1 1 auto; width: 1%; min-width: 0;">
+                    </div>
+                </div>
+                <div class="mb-2"> 
+                    <label for="visualizerTypeSelect" class="form-label small">Тип визуализатор:</label>
+                    <select id="visualizerTypeSelect" class="form-select form-select-sm">
+                        <option value="bars" selected>Стълбове</option>
+                        <option value="wave">Вълна</option>
+                        <option value="lightning">Светкавица</option>
+                    </select>
+                </div>
+                <!-- Controls for visualization mode - now applies to all visualizers -->
+                <div id="visualizationModeControls">
+                    <label for="visualizationModeSelect" class="form-label small">Режим на визуализация:</label>
+                    <select id="visualizationModeSelect" class="form-select form-select-sm">
+                        <option value="frequency" selected>По честоти</option>
+                        <option value="amplitude">По амплитуда</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+    <audio id="audioPlayer" crossorigin="anonymous"></audio>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Three.js globals
+        let scene, camera, renderer;
+        let bars = [];
+        let waveLine;
+        const N_BARS = 64; // This is also analyser.frequencyBinCount
+        const INITIAL_BAR_HEIGHT = 0.1;
+
+        // Web Audio API globals
+        let audioContext, analyser, sourceNode;
+        let frequencyData, timeDomainData;
+
+        // HTML Elements
+        let playButton, audioUrlInput, audioPlayer, volumeSlider, visualizerTypeSelect;
+        let visualizationModeSelect; // Renamed from barModeSelect
+        let animationFrameId;
+        let currentAudioUrl = '';
+        let isPlaying = false;
+        let isAudioContextInitialized = false;
+        let currentVisualizerType = 'bars';
+        let currentVisualizationMode = 'frequency'; // Renamed from currentBarMode
+        const Y_SHIFT_DOWN = 40;
+
+        // Screen-related world dimensions
+        let H_WORLD_AT_VIZ_PLANE; 
+        let V_OFFSET_WORLD;
+
+        // Camera parameters
+        const CAMERA_FOV = 75;
+        const CAMERA_Z_DISTANCE_TO_VIZ_PLANE = 35;
+
+        // Lightning Visualizer Globals
+        let lightningBolts = [];
+        const MAX_LIGHTNING_BOLTS = 20;
+        const LIGHTNING_COLOR = 0x99ccff;
+        const LIGHTNING_FADE_DURATION = 400;
+        const LIGHTNING_TRIGGER_THRESHOLD = 150; // For frequency mode (bass energy 0-255) 190
+        const LIGHTNING_AMPLITUDE_TRIGGER_THRESHOLD = 0.20; // For amplitude mode (RMS 0-1), TUNE THIS
+        const LIGHTNING_MIN_SEGMENTS = 8;
+        const LIGHTNING_MAX_SEGMENTS = 15;
+        const LIGHTNING_JAGGEDNESS = 2.5;
+        let lastLightningTriggerTime = 0;
+        const LIGHTNING_COOLDOWN = 100;
+
+        // NEW: Lightning thickness constants
+        const MIN_LIGHTNING_LINEWIDTH = 1.5;
+        const MAX_LIGHTNING_LINEWIDTH = 6.0; // Increased for more noticeable effect
+        const MAX_EXPECTED_RMS_FOR_SCALING = 0.6; // For amplitude mode scaling
+
+        // Calculated Y coordinates
+        let CAMERA_LOOKAT_Y;
+        let SCREEN_TOP_Y_WORLD;
+        let LIGHTNING_STRIKE_TARGET_Y_WORLD;
+        
+        // Visualizer specific scaling factors
+        const BAR_AMPLITUDE_SCALING_FACTOR = 50; 
+        const WAVE_AMPLITUDE_HEIGHT_SCALE = 10; // For wave in amplitude mode (time domain waveform)
+        const WAVE_FREQUENCY_HEIGHT_SCALE = 25; // For wave in frequency mode (spectrum display), max height
+
+
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x101020);
+            camera = new THREE.PerspectiveCamera(CAMERA_FOV, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 10 - Y_SHIFT_DOWN, CAMERA_Z_DISTANCE_TO_VIZ_PLANE);
+            CAMERA_LOOKAT_Y = 0 - Y_SHIFT_DOWN;
+            camera.lookAt(0, CAMERA_LOOKAT_Y, 0);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            H_WORLD_AT_VIZ_PLANE = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * CAMERA_Z_DISTANCE_TO_VIZ_PLANE;
+            const VERTICAL_SHIFT_SCREEN_PERCENTAGE = 0.50;
+            V_OFFSET_WORLD = VERTICAL_SHIFT_SCREEN_PERCENTAGE * H_WORLD_AT_VIZ_PLANE;
+
+            SCREEN_TOP_Y_WORLD = CAMERA_LOOKAT_Y + H_WORLD_AT_VIZ_PLANE / 2;
+            LIGHTNING_STRIKE_TARGET_Y_WORLD = CAMERA_LOOKAT_Y - V_OFFSET_WORLD;
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.9);
+            directionalLight.position.set(5, 20, 10);
+            scene.add(directionalLight);
+
+            const barWidth = 1.0, barDepth = 1.0, barSpacing = 0.5;
+            const totalLayoutWidth = N_BARS * (barWidth + barSpacing) - barSpacing;
+            const startXBars = -totalLayoutWidth / 2 + barWidth / 2;
+            for (let i = 0; i < N_BARS; i++) {
+                const geometry = new THREE.BoxGeometry(barWidth, 1, barDepth);
+                const material = new THREE.MeshStandardMaterial({
+                    color: new THREE.Color().setHSL((i / N_BARS), 0.9, 0.6),
+                    roughness: 0.5, metalness: 0.2
+                });
+                const bar = new THREE.Mesh(geometry, material);
+                bar.scale.y = INITIAL_BAR_HEIGHT;
+                bar.position.y = (INITIAL_BAR_HEIGHT / 2) - Y_SHIFT_DOWN - V_OFFSET_WORLD;
+                bar.position.x = startXBars + i * (barWidth + barSpacing);
+                bars.push(bar);
+                scene.add(bar);
+            }
+
+            const numWavePointsForInit = N_BARS * 2; 
+            const waveMaterial = new THREE.LineBasicMaterial({ color: 0x00ffaa, linewidth: 2 });
+            const waveGeometry = new THREE.BufferGeometry();
+            const waveVertices = new Float32Array(numWavePointsForInit * 3).fill(0);
+            waveGeometry.setAttribute('position', new THREE.BufferAttribute(waveVertices, 3));
+            waveLine = new THREE.Line(waveGeometry, waveMaterial);
+            waveLine.position.y = 0 - Y_SHIFT_DOWN - V_OFFSET_WORLD;
+            waveLine.visible = false;
+            scene.add(waveLine);
+            
+            initLightningVisualizer();
+            updateWaveGeometryWidth(); 
+            window.addEventListener('resize', onWindowResize, false);
+            renderer.render(scene, camera);
+        }
+
+        function initLightningVisualizer() {
+            const material = new THREE.LineBasicMaterial({
+                color: LIGHTNING_COLOR, 
+                linewidth: MIN_LIGHTNING_LINEWIDTH, // Use min linewidth for initialization
+                transparent: true, 
+                opacity: 0
+            });
+            for (let i = 0; i < MAX_LIGHTNING_BOLTS; i++) {
+                const geometry = new THREE.BufferGeometry();
+                const initialPoints = new Float32Array((LIGHTNING_MAX_SEGMENTS + 1) * 3).fill(0);
+                geometry.setAttribute('position', new THREE.BufferAttribute(initialPoints, 3));
+                const bolt = new THREE.Line(geometry, material.clone()); // Clone material for individual linewidth
+                bolt.visible = false; bolt.userData = { isActive: false }; bolt.frustumCulled = false;
+                scene.add(bolt);
+                lightningBolts.push(bolt);
+            }
+        }
+        
+        function generateLightningPath(startX, startY, startZ, length, numSegments, jaggednessFactor) {
+            const points = [startX, startY, startZ];
+            let currentX = startX; let currentY = startY;
+            const segmentLength = length / numSegments;
+            for (let s = 0; s < numSegments; s++) {
+                currentY -= segmentLength;
+                const actualJaggedness = jaggednessFactor * segmentLength * ((numSegments - s) / numSegments) * 0.5;
+                currentX += (Math.random() - 0.5) * 2 * actualJaggedness;
+                const yOffset = (Math.random() - 0.5) * segmentLength * 0.3;
+                points.push(currentX, currentY + yOffset, startZ);
+            }
+            return new Float32Array(points);
+        }
+
+        function getVisualizerVisibleWidth() {
+            if (!camera || !H_WORLD_AT_VIZ_PLANE) return 60; 
+            return H_WORLD_AT_VIZ_PLANE * camera.aspect;
+        }
+
+        function triggerLightningBolt(triggerValue) { // triggerValue is bassEnergy (0-255) or RMS (0-1)
+            const bolt = lightningBolts.find(b => !b.userData.isActive);
+            if (!bolt) return;
+
+            let targetLinewidth = MIN_LIGHTNING_LINEWIDTH;
+
+            if (currentVisualizationMode === 'frequency') {
+                // triggerValue is bassEnergy (0-255)
+                // Normalize based on the range from threshold to max (255)
+                const denominator = (255.0 - LIGHTNING_TRIGGER_THRESHOLD);
+                const normalizedStrength = denominator > 0 ? Math.max(0, Math.min(1, (triggerValue - LIGHTNING_TRIGGER_THRESHOLD) / denominator)) : 0;
+                targetLinewidth = MIN_LIGHTNING_LINEWIDTH + normalizedStrength * (MAX_LIGHTNING_LINEWIDTH - MIN_LIGHTNING_LINEWIDTH);
+            } else if (currentVisualizationMode === 'amplitude') {
+                // triggerValue is rms (0.0-1.0)
+                // Normalize based on the range from threshold to MAX_EXPECTED_RMS_FOR_SCALING
+                const denominator = (MAX_EXPECTED_RMS_FOR_SCALING - LIGHTNING_AMPLITUDE_TRIGGER_THRESHOLD);
+                const normalizedStrength = denominator > 0 ? Math.max(0, Math.min(1, (triggerValue - LIGHTNING_AMPLITUDE_TRIGGER_THRESHOLD) / denominator)) : 0;
+                targetLinewidth = MIN_LIGHTNING_LINEWIDTH + normalizedStrength * (MAX_LIGHTNING_LINEWIDTH - MIN_LIGHTNING_LINEWIDTH);
+            }
+            
+            bolt.material.linewidth = Math.max(MIN_LIGHTNING_LINEWIDTH, Math.min(MAX_LIGHTNING_LINEWIDTH, targetLinewidth));
+
+            bolt.userData.isActive = true; bolt.visible = true; bolt.material.opacity = 0.85;
+            const visualWidth = getVisualizerVisibleWidth();
+            const randomX = (Math.random() - 0.5) * visualWidth * 0.9; 
+            const startY = SCREEN_TOP_Y_WORLD - (Math.random() * H_WORLD_AT_VIZ_PLANE * 0.1); 
+            const endY = LIGHTNING_STRIKE_TARGET_Y_WORLD + (Math.random() - 0.5) * (H_WORLD_AT_VIZ_PLANE * 0.2);
+            const strikeLength = Math.max(10, startY - endY);
+            const numSegments = LIGHTNING_MIN_SEGMENTS + Math.floor(Math.random() * (LIGHTNING_MAX_SEGMENTS - LIGHTNING_MIN_SEGMENTS + 1));
+            const pathPoints = generateLightningPath(randomX, startY, 0, strikeLength, numSegments, LIGHTNING_JAGGEDNESS);
+            bolt.geometry.setAttribute('position', new THREE.BufferAttribute(pathPoints, 3));
+            bolt.geometry.attributes.position.needsUpdate = true;
+            bolt.geometry.computeBoundingSphere();
+            anime.remove(bolt.material); 
+            anime({
+                targets: bolt.material, opacity: 0, duration: LIGHTNING_FADE_DURATION,
+                delay: 50 + Math.random() * 100, easing: 'easeInQuad',
+                complete: () => { bolt.visible = false; bolt.userData.isActive = false; }
+            });
+        }
+
+        function updateWaveGeometryWidth() {
+            if (!waveLine || !camera) return;
+            const distanceToWave = camera.position.z - waveLine.position.z;
+            const visibleHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * distanceToWave;
+            const visibleWidth = visibleHeight * camera.aspect;
+            const targetWaveWidth = visibleWidth * 0.90;
+            const positions = waveLine.geometry.attributes.position.array;
+            const numPoints = waveLine.geometry.attributes.position.count; 
+            const startX = -targetWaveWidth / 2;
+            const stepX = (numPoints > 1) ? targetWaveWidth / (numPoints - 1) : 0;
+            for (let i = 0; i < numPoints; i++) {
+                positions[i * 3] = startX + i * stepX; 
+            }
+            waveLine.geometry.attributes.position.needsUpdate = true;
+        }
+
+        function onWindowResize() {
+            H_WORLD_AT_VIZ_PLANE = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * CAMERA_Z_DISTANCE_TO_VIZ_PLANE;
+            const VERTICAL_SHIFT_SCREEN_PERCENTAGE = 0.50;
+            V_OFFSET_WORLD = VERTICAL_SHIFT_SCREEN_PERCENTAGE * H_WORLD_AT_VIZ_PLANE;
+            SCREEN_TOP_Y_WORLD = CAMERA_LOOKAT_Y + H_WORLD_AT_VIZ_PLANE / 2;
+            LIGHTNING_STRIKE_TARGET_Y_WORLD = CAMERA_LOOKAT_Y - V_OFFSET_WORLD;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            updateWaveGeometryWidth(); 
+        }
+
+        async function initAudioContext() {
+            if (!isAudioContextInitialized) {
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioContext.state === 'suspended') await audioContext.resume();
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = N_BARS * 2; 
+                    frequencyData = new Uint8Array(analyser.frequencyBinCount); 
+                    timeDomainData = new Uint8Array(analyser.fftSize); 
+                    if (!sourceNode) {
+                        sourceNode = audioContext.createMediaElementSource(audioPlayer);
+                        sourceNode.connect(analyser);
+                        analyser.connect(audioContext.destination);
+                    }
+                    isAudioContextInitialized = true; return true;
+                } catch (e) { console.error("AudioContext init error:", e); alert("Audio init error: " + e.message); playButton.disabled = false; return false; }
+            } return true;
+        }
+        
+        function setupAudioSource(url) {
+            if (!isAudioContextInitialized || !sourceNode) { playButton.disabled = false; playButton.textContent = "Пусни"; return; }
+            currentAudioUrl = url; audioPlayer.src = url; audioPlayer.load(); playButton.disabled = true;
+        }
+
+        function animate() {
+            animationFrameId = requestAnimationFrame(animate);
+            if (isPlaying && analyser) {
+                // === BARS VISUALIZER ===
+                if (currentVisualizerType === 'bars' && bars.length > 0 && bars[0].visible) {
+                    if (currentVisualizationMode === 'frequency' && frequencyData) {
+                        analyser.getByteFrequencyData(frequencyData);
+                        for (let i = 0; i < N_BARS; i++) {
+                            if (bars[i] && frequencyData[i] !== undefined) {
+                                const amplitude = frequencyData[i];
+                                let targetVisualHeight = (amplitude / 255) * 30 + INITIAL_BAR_HEIGHT;
+                                targetVisualHeight = Math.max(INITIAL_BAR_HEIGHT, targetVisualHeight);
+                                anime({ targets: bars[i].scale, y: targetVisualHeight, duration: 75, easing: 'easeOutQuad' });
+                                anime({ targets: bars[i].position, y: (targetVisualHeight / 2) - Y_SHIFT_DOWN - V_OFFSET_WORLD, duration: 75, easing: 'easeOutQuad' });
+                            }
+                        }
+                    } else if (currentVisualizationMode === 'amplitude' && timeDomainData) {
+                        analyser.getByteTimeDomainData(timeDomainData);
+                        let sumSquares = 0.0;
+                        for (let i = 0; i < analyser.fftSize; i++) {
+                            const normSample = (timeDomainData[i] / 128.0) - 1.0;
+                            sumSquares += normSample * normSample;
+                        }
+                        const rms = Math.sqrt(sumSquares / analyser.fftSize);
+                        let targetVisualHeight = (rms * BAR_AMPLITUDE_SCALING_FACTOR) + INITIAL_BAR_HEIGHT;
+                        targetVisualHeight = Math.max(INITIAL_BAR_HEIGHT, targetVisualHeight);
+                        targetVisualHeight = Math.min(targetVisualHeight, 30 + INITIAL_BAR_HEIGHT); 
+                        for (let i = 0; i < N_BARS; i++) {
+                            if (bars[i]) {
+                                anime({ targets: bars[i].scale, y: targetVisualHeight, duration: 75, easing: 'easeOutQuad' });
+                                anime({ targets: bars[i].position, y: (targetVisualHeight / 2) - Y_SHIFT_DOWN - V_OFFSET_WORLD, duration: 75, easing: 'easeOutQuad' });
+                            }
+                        }
+                    }
+                // === WAVE VISUALIZER ===
+                } else if (currentVisualizerType === 'wave' && waveLine && waveLine.visible) {
+                    const positions = waveLine.geometry.attributes.position.array;
+                    const numWaveLinePoints = waveLine.geometry.attributes.position.count;
+
+                    if (currentVisualizationMode === 'amplitude' && timeDomainData) {
+                        analyser.getByteTimeDomainData(timeDomainData); 
+                        for (let i = 0; i < numWaveLinePoints; i++) {
+                            const v = timeDomainData[i] / 128.0; 
+                            positions[i * 3 + 1] = (v - 1.0) * WAVE_AMPLITUDE_HEIGHT_SCALE; 
+                        }
+                    } else if (currentVisualizationMode === 'frequency' && frequencyData) {
+                        analyser.getByteFrequencyData(frequencyData); 
+                        for (let i = 0; i < N_BARS; i++) { 
+                            const amplitude = frequencyData[i]; 
+                            const yValue = (amplitude / 255.0) * WAVE_FREQUENCY_HEIGHT_SCALE; 
+                            const pointIndex1 = i * 2;
+                            const pointIndex2 = i * 2 + 1;
+                            if (pointIndex1 < numWaveLinePoints) positions[pointIndex1 * 3 + 1] = yValue;
+                            if (pointIndex2 < numWaveLinePoints) positions[pointIndex2 * 3 + 1] = yValue;
+                        }
+                    }
+                    waveLine.geometry.attributes.position.needsUpdate = true;
+                // === LIGHTNING VISUALIZER ===
+                } else if (currentVisualizerType === 'lightning') {
+                    const now = performance.now();
+                    if (now - lastLightningTriggerTime > LIGHTNING_COOLDOWN) {
+                        let shouldTrigger = false;
+                        let triggerValue = 0; // This will hold bassEnergy or RMS
+
+                        if (currentVisualizationMode === 'frequency' && frequencyData) {
+                            analyser.getByteFrequencyData(frequencyData);
+                            let bassEnergy = 0;
+                            const numBassBins = Math.min(5, frequencyData.length); 
+                            if (numBassBins > 0) {
+                                for (let i = 0; i < numBassBins; i++) { bassEnergy += frequencyData[i]; }
+                                bassEnergy /= numBassBins; 
+                            }
+                            if (bassEnergy > LIGHTNING_TRIGGER_THRESHOLD) {
+                                shouldTrigger = true;
+                                triggerValue = bassEnergy;
+                            }
+                        } else if (currentVisualizationMode === 'amplitude' && timeDomainData) {
+                            analyser.getByteTimeDomainData(timeDomainData);
+                            let sumSquares = 0.0;
+                            for (let i = 0; i < analyser.fftSize; i++) {
+                                const normSample = (timeDomainData[i] / 128.0) - 1.0;
+                                sumSquares += normSample * normSample;
+                            }
+                            const rms = Math.sqrt(sumSquares / analyser.fftSize);
+                            if (rms > LIGHTNING_AMPLITUDE_TRIGGER_THRESHOLD) {
+                                shouldTrigger = true;
+                                triggerValue = rms;
+                            }
+                        }
+
+                        if (shouldTrigger) {
+                            triggerLightningBolt(triggerValue); // Pass the intensity value
+                            lastLightningTriggerTime = now;
+                        }
+                    }
+                }
+            }
+            if (renderer && scene && camera) renderer.render(scene, camera);
+        }
+        
+        function resetBars() {
+            bars.forEach(bar => { anime.remove(bar.scale); anime.remove(bar.position); bar.scale.y = INITIAL_BAR_HEIGHT; bar.position.y = (INITIAL_BAR_HEIGHT / 2) - Y_SHIFT_DOWN - V_OFFSET_WORLD; });
+        }
+
+        function resetWave() {
+            if (!waveLine || !waveLine.geometry.attributes.position) return;
+            const positions = waveLine.geometry.attributes.position.array;
+            const numPoints = waveLine.geometry.attributes.position.count;
+            for (let i = 0; i < numPoints; i++) { if (positions.length > i * 3 + 1) positions[i * 3 + 1] = 0; } 
+            waveLine.geometry.attributes.position.needsUpdate = true;
+        }
+
+        function resetLightning() {
+            lightningBolts.forEach(bolt => {
+                if (bolt.userData.isActive) {
+                    anime.remove(bolt.material); 
+                    bolt.material.opacity = 0; bolt.visible = false; bolt.userData.isActive = false;
+                    // Reset linewidth to minimum if needed, though new bolts will get it set anyway
+                    bolt.material.linewidth = MIN_LIGHTNING_LINEWIDTH; 
+                }
+            });
+        }
+        
+        function resetAllVisualsAndRender() {
+            resetBars();
+            resetWave();
+            resetLightning();
+            if (renderer && scene && camera) renderer.render(scene, camera);
+        }
+
+
+        function handleVisualizerChange() {
+            currentVisualizerType = visualizerTypeSelect.value;
+            
+            bars.forEach(bar => bar.visible = false);
+            if (waveLine) waveLine.visible = false;
+            lightningBolts.forEach(bolt => { 
+                anime.remove(bolt.material);
+                bolt.visible = false;
+                bolt.userData.isActive = false;
+                bolt.material.opacity = 0;
+            });
+
+            if (currentVisualizerType === 'bars') {
+                bars.forEach(bar => bar.visible = true);
+            } else if (currentVisualizerType === 'wave') {
+                if (waveLine) waveLine.visible = true;
+            } else if (currentVisualizerType === 'lightning') {
+                // Lightning is event-driven
+            }
+            
+            if (!isPlaying) {
+                resetAllVisualsAndRender();
+            } else {
+                 if (renderer && scene && camera) renderer.render(scene, camera);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            playButton = document.getElementById('playButton');
+            audioUrlInput = document.getElementById('audioUrlInput');
+            audioPlayer = document.getElementById('audioPlayer');
+            volumeSlider = document.getElementById('volumeSlider');
+            visualizerTypeSelect = document.getElementById('visualizerTypeSelect');
+            visualizationModeSelect = document.getElementById('visualizationModeSelect'); 
+
+            if (!playButton || !audioUrlInput || !audioPlayer || !volumeSlider || !visualizerTypeSelect || !visualizationModeSelect) {
+                console.error("HTML control elements not found!"); return;
+            }
+            
+            initThree(); 
+            handleVisualizerChange(); 
+
+            audioPlayer.volume = parseFloat(volumeSlider.value);
+            volumeSlider.addEventListener('input', () => audioPlayer.volume = parseFloat(volumeSlider.value));
+            audioPlayer.addEventListener('volumechange', () => volumeSlider.value = audioPlayer.volume);
+            
+            visualizerTypeSelect.addEventListener('change', () => {
+                handleVisualizerChange();
+            });
+
+            visualizationModeSelect.addEventListener('change', () => {
+                currentVisualizationMode = visualizationModeSelect.value;
+                if (!isPlaying) {
+                   resetAllVisualsAndRender();
+                } else {
+                    if (currentVisualizerType === 'wave') {
+                        resetWave(); 
+                        if (renderer && scene && camera) renderer.render(scene, camera);
+                    }
+                }
+            });
+
+            audioPlayer.oncanplay = () => {
+                if (currentAudioUrl === audioPlayer.src) {
+                    playButton.disabled = false; playButton.textContent = "Пусни";
+                }
+            };
+            audioPlayer.onplay = () => {
+                if (currentAudioUrl === audioPlayer.src) {
+                    isPlaying = true; playButton.textContent = "Пауза"; playButton.disabled = false;
+                    if (!animationFrameId) animate(); 
+                } else { audioPlayer.pause(); } 
+            };
+            audioPlayer.onpause = () => { 
+                isPlaying = false; playButton.textContent = "Пусни"; playButton.disabled = false;
+                resetAllVisualsAndRender(); 
+            };
+            audioPlayer.onerror = (e) => {
+                console.error("Audio element error:", e, "URL:", audioPlayer.src);
+                alert(`Error loading ${audioPlayer.src || 'audio'}. Check console.`);
+                playButton.disabled = false; playButton.textContent = "Пусни"; isPlaying = false;
+                resetAllVisualsAndRender();
+            };
+
+            playButton.addEventListener('click', async () => {
+                const newUrl = audioUrlInput.value.trim();
+                if (!newUrl) { alert("Please enter an audio stream URL."); return; }
+                
+                if (!isAudioContextInitialized) {
+                    if (!(await initAudioContext())) { playButton.disabled = false; playButton.textContent = "Пусни"; return; }
+                } else if (audioContext.state === 'suspended') {
+                    try { await audioContext.resume(); } catch (e) { console.error("Error resuming AudioContext:", e); playButton.disabled = false; playButton.textContent = "Пусни"; return; }
+                }
+
+                if (newUrl === currentAudioUrl && audioPlayer.src === newUrl) { 
+                    if (isPlaying) {
+                        audioPlayer.pause();
+                    } else {
+                        if (audioPlayer.readyState >= 2) { 
+                            playButton.disabled = true; 
+                            audioPlayer.play().catch(e => { 
+                                console.error("Play error:", e);
+                                playButton.disabled = false; playButton.textContent = "Пусни"; isPlaying = false; 
+                            });
+                        } else { 
+                            playButton.disabled = false; playButton.textContent = "Пусни"; 
+                            console.warn("Audio not ready to play, readyState:", audioPlayer.readyState);
+                        }
+                    }
+                } else { 
+                    playButton.disabled = true; playButton.textContent = "Зарежда...";
+                    if (isPlaying) {
+                        audioPlayer.pause(); 
+                    } else { 
+                        resetAllVisualsAndRender();
+                    }
+                    isPlaying = false; 
+                    setupAudioSource(newUrl);
+                }
+            });
+            if (!animationFrameId) animate(); 
+        });
+    </script>
+</body>
+</html>
